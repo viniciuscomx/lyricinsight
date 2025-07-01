@@ -1,11 +1,13 @@
-// Using Hugging Face Inference API for text generation
+// Using Gemini API for text generation
 
 // Adiciona fetch para Node.js se necessário
 // Remova/comment se já estiver disponível globalmente (Node 18+)
 // // npm install node-fetch
 
-const HF_API_KEY = process.env.HF_API_KEY;
-const HF_API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium";
+// Use a mesma variável de ambiente do restante do projeto
+const HF_API_KEY = process.env.HUGGINGFACE_API_KEY;
+// Troque para um modelo público disponível
+const HF_API_URL = "https://api-inference.huggingface.co/models/distilgpt2";
 
 export interface AnalysisResult {
   songTitle?: string;
@@ -23,98 +25,96 @@ export interface AnalysisResult {
   authorIntention: string;
 }
 
-async function callHuggingFaceAPI(prompt: string): Promise<string> {
-  if (!HF_API_KEY) {
-    throw new Error("Hugging Face API key not set in environment variable HF_API_KEY");
-  }
-  const response = await fetch(HF_API_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${HF_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      inputs: prompt,
-      parameters: {
-        max_length: 500,
-        temperature: 0.7,
-        return_full_text: false
-      }
-    })
-  });
+// Substitua toda a lógica de HuggingFace por Gemini
 
-  if (!response.ok) {
-    throw new Error(`Hugging Face API error: ${response.status}`);
-  }
-
-  const result = await response.json();
-  return result[0]?.generated_text || '';
-}
-
-export async function analyzeLyrics(lyrics: string): Promise<AnalysisResult> {
+export async function analyzeLyrics(lyrics: string): Promise<{
+  songTitle?: string;
+  artist?: string;
+  references: Array<{ title: string; description: string; icon: string; }>;
+  curiosities: Array<{ title: string; description: string; icon: string; }>;
+  authorIntention: string;
+}> {
   try {
-    console.log("Analyzing lyrics with Hugging Face API...");
-    
-    // Create a structured prompt for analysis
-    const analysisPrompt = `Analise esta letra de música em português brasileiro e identifique:
-1. Referências culturais, históricas ou literárias
-2. Curiosidades sobre a composição
+    const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+    if (!GOOGLE_API_KEY) throw new Error("GOOGLE_API_KEY não definida no ambiente");
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GOOGLE_API_KEY}`;
+    const prompt = `Analise a letra da música abaixo e responda de forma clara, sem asteriscos, tópicos ou markdown. 
+Resuma cada item em até 2 frases curtas e objetivas. 
+Se não houver informações relevantes, responda "Nenhuma encontrada".
+
+1. Referências culturais, históricas ou literárias (se houver)
+2. Curiosidades sobre a composição (se houver)
 3. Intenção do autor
 
-Letra: "${lyrics.substring(0, 300)}"
+Letra: """${lyrics.substring(0, 1000)}"""
 
-Análise:`;
+Responda no formato, cada item em uma linha:
+Referências: ... (adicione um emoji relacionado ao conteúdo)
+Curiosidades: ... (adicione um emoji relacionado ao conteúdo)
+Intenção do autor: ... (adicione um emoji relacionado ao conteúdo)
+`;
 
-    // Call Hugging Face API
-    const apiResponse = await callHuggingFaceAPI(analysisPrompt);
-    
-    // Since HuggingFace free models may not return structured JSON,
-    // we'll parse the response and create our structured format
-    const analysis: AnalysisResult = {
-      songTitle: extractSongInfo(lyrics, 'title'),
-      artist: extractSongInfo(lyrics, 'artist'),
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: prompt }
+            ]
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      let errorText = await response.text();
+      throw new Error(`Erro ao acessar modelo Gemini: ${response.status} ${errorText}`);
+    }
+
+    const result = await response.json();
+    const analysisText = result?.candidates?.[0]?.content?.parts?.[0]?.text || "Análise não disponível.";
+
+    // Extrai blocos segmentados e ignora texto extra
+    const extractBlockAndIcon = (label: string, defaultIcon: string) => {
+      // Pega só a linha do label até o próximo label ou fim do texto
+      const regex = new RegExp(`${label}:\\s*([^\\n]*)\\s*([\\u2600-\\u27BF\\u1F300-\\u1F6FF\\u1F900-\\u1F9FF\\u1FA70-\\u1FAFF])?`, "iu");
+      const match = analysisText.match(regex);
+      let description = match ? match[1].trim() : "Nenhuma encontrada.";
+      // Remove emoji do final do texto, se presente
+      description = description.replace(/[\u2600-\u27BF\u1F300-\u1F6FF\u1F900-\u1F9FF\u1FA70-\u1FAFF]+$/g, "").trim();
+      // Tenta pegar emoji do texto, senão usa o padrão
+      const iconMatch = match && match[2] ? match[2] : defaultIcon;
+      return { description, icon: iconMatch };
+    };
+
+    const ref = extractBlockAndIcon("Referências", "🔗");
+    const cur = extractBlockAndIcon("Curiosidades", "💡");
+    const intent = extractBlockAndIcon("Intenção do autor", "📝");
+
+    return {
       references: [
         {
-          title: "Análise Textual",
-          description: apiResponse.substring(0, 200) + "...",
-          icon: "fas fa-book"
-        },
-        {
-          title: "Contexto Cultural",
-          description: "A letra reflete elementos culturais e sociais do contexto em que foi criada.",
-          icon: "fas fa-globe"
-        },
-        {
-          title: "Estilo Literário",
-          description: "A composição demonstra técnicas poéticas e narrativas específicas do gênero.",
-          icon: "fas fa-feather"
+          title: "Referências",
+          description: ref.description,
+          icon: ref.icon
         }
       ],
       curiosities: [
         {
-          title: "Estrutura Poética",
-          description: "A música utiliza recursos como metáfora, rima e ritmo para criar impacto emocional.",
-          icon: "fas fa-pen"
-        },
-        {
-          title: "Temática Central",
-          description: "Os temas abordados refletem experiências humanas universais e contemporâneas.",
-          icon: "fas fa-heart"
-        },
-        {
-          title: "Impacto Sonoro",
-          description: "A escolha das palavras considera tanto o significado quanto o efeito sonoro na música.",
-          icon: "fas fa-music"
+          title: "Curiosidades",
+          description: cur.description,
+          icon: cur.icon
         }
       ],
-      authorIntention: apiResponse || "A análise sugere que o autor busca conectar-se emocionalmente com o público através de uma narrativa pessoal que ecoa experiências universais. A letra demonstra cuidado na construção de imagens poéticas e na escolha de palavras que evocam sentimentos específicos."
+      authorIntention: `${intent.icon} ${intent.description}`
     };
-
-    return analysis;
   } catch (error) {
     console.error("Error analyzing lyrics:", error);
-    
-    // Fallback analysis if API fails
     return {
       references: [
         {

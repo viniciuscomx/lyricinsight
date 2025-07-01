@@ -1,55 +1,10 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import fetch from "node-fetch";
 import { analysisRequestSchema } from "@shared/schema";
 import { z } from "zod";
 import crypto from "crypto";
-
-async function analyzeLyrics(lyrics: string) {
-  const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
-  if (!HUGGINGFACE_API_KEY) throw new Error("HUGGINGFACE_API_KEY não definida no ambiente");
-
-  // Use modelo público alternativo
-  const endpoint = "https://api-inference.huggingface.co/models/facebook/opt-1.3b";
-  const prompt = `Analyze these song lyrics in English and identify:
-1. Cultural, historical, or literary references
-2. Curiosities about the composition
-3. Author's intention
-
-Lyrics: """${lyrics.substring(0, 1000)}"""
-
-Analysis:`;
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${HUGGINGFACE_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: 100,
-        temperature: 0.7,
-        return_full_text: false
-      }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`HuggingFace API error: ${response.status} ${await response.text()}`);
-  }
-
-  const result = await response.json();
-  if (Array.isArray(result) && result[0]?.generated_text) {
-    return result[0].generated_text;
-  }
-  if (typeof result.generated_text === "string") {
-    return result.generated_text;
-  }
-  return "Analysis not available.";
-}
+import { analyzeLyrics } from "./lyricsAnalysis";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Analyze lyrics endpoint
@@ -72,18 +27,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Chama a HuggingFace e monta o objeto de análise
-      const analysisText = await analyzeLyrics(lyrics);
+      // Use a função analyzeLyrics do Gemini
+      const analysis = await analyzeLyrics(lyrics);
 
       const storedAnalysis = await storage.createLyricsAnalysis({
         lyrics,
         songTitle: null,
         artist: null,
-        references: [
-          { title: "AI Analysis", description: analysisText, icon: "🤖" }
-        ],
-        curiosities: [],
-        authorIntention: analysisText,
+        references: analysis.references,
+        curiosities: analysis.curiosities,
+        authorIntention: analysis.authorIntention,
       });
 
       res.json({
@@ -91,11 +44,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lyrics,
         songTitle: null,
         artist: null,
-        references: [
-          { title: "AI Analysis", description: analysisText, icon: "🤖" }
-        ],
-        curiosities: [],
-        authorIntention: analysisText,
+        references: analysis.references,
+        curiosities: analysis.curiosities,
+        authorIntention: analysis.authorIntention,
         createdAt: storedAnalysis.createdAt
       });
     } catch (error) {

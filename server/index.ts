@@ -43,51 +43,87 @@ app.use((req, res, next) => {
   next();
 });
 
-// Função para chamar a API da HuggingFace
+// Função para chamar a API do Gemini e segmentar a análise corretamente
 async function analyzeLyrics(lyrics: string) {
-  const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
-  if (!HUGGINGFACE_API_KEY) throw new Error("HUGGINGFACE_API_KEY não definida no ambiente");
+  const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+  if (!GOOGLE_API_KEY) throw new Error("GOOGLE_API_KEY não definida no ambiente");
 
-  // Use modelo público garantido
-  const endpoint = "https://api-inference.huggingface.co/models/gpt2";
-  const prompt = `Analyze these song lyrics in English and identify:
-1. Cultural, historical, or literary references
-2. Curiosities about the composition
-3. Author's intention
+  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GOOGLE_API_KEY}`;
+  const prompt = `Analise a letra da música abaixo de forma detalhada, criativa e envolvente.
+Para cada item, escreva de 4 a 7 frases, trazendo contexto, interpretações e possíveis significados.
+Evite respostas genéricas. Seja específico e aprofunde a análise, mas mantenha o texto claro e agradável.
+Se não houver informações relevantes, responda "Nenhuma encontrada".
 
-Lyrics: """${lyrics.substring(0, 1000)}"""
+1. Referências culturais, históricas ou literárias (se houver)
+2. Curiosidades sobre a composição (se houver)
+3. Intenção do autor
 
-Analysis:`;
+Letra: """${lyrics.substring(0, 1000)}"""
+
+Responda no formato, cada item em uma linha:
+Referências: ... (adicione um emoji relacionado ao conteúdo)
+Curiosidades: ... (adicione um emoji relacionado ao conteúdo)
+Intenção do autor: ... (adicione um emoji relacionado ao conteúdo)
+`;
 
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${HUGGINGFACE_API_KEY}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: 500,
-        temperature: 0.7,
-        return_full_text: false
-      }
+      contents: [
+        {
+          parts: [
+            { text: prompt }
+          ]
+        }
+      ]
     })
   });
 
   if (!response.ok) {
-    throw new Error(`HuggingFace API error: ${response.status} ${await response.text()}`);
+    let errorText = await response.text();
+    throw new Error(`Erro ao acessar modelo Gemini: ${response.status} ${errorText}`);
   }
 
   const result = await response.json();
-  // O formato pode variar, então trate ambos os casos
-  if (Array.isArray(result) && result[0]?.generated_text) {
-    return result[0].generated_text;
-  }
-  if (typeof result.generated_text === "string") {
-    return result.generated_text;
-  }
-  return "Análise não disponível.";
+  const analysisText = result?.candidates?.[0]?.content?.parts?.[0]?.text || "Análise não disponível.";
+
+  // Extrai blocos segmentados e ignora texto extra
+  const extractBlockAndIcon = (label: string, defaultIcon: string) => {
+    // Pega só a linha do label até o próximo label ou fim do texto
+    const regex = new RegExp(`${label}:\\s*([\\s\\S]*?)([\\u2600-\\u27BF\\u1F300-\\u1F6FF\\u1F900-\\u1F9FF\\u1FA70-\\u1FAFF])?\\s*(?=\\n|$)`, "iu");
+    const match = analysisText.match(regex);
+    let description = match ? match[1].trim() : "Nenhuma encontrada.";
+    // Remove emoji do final do texto, se presente
+    description = description.replace(/[\u2600-\u27BF\u1F300-\u1F6FF\u1F900-\u1F9FF\u1FA70-\u1FAFF]+$/g, "").trim();
+    // Tenta pegar emoji do texto, senão usa o padrão
+    const iconMatch = match && match[2] ? match[2] : defaultIcon;
+    return { description, icon: iconMatch };
+  };
+
+  const ref = extractBlockAndIcon("Referências", "🔗");
+  const cur = extractBlockAndIcon("Curiosidades", "💡");
+  const intent = extractBlockAndIcon("Intenção do autor", "📝");
+
+  return {
+    references: [
+      {
+        title: "Referências",
+        description: ref.description,
+        icon: ref.icon
+      }
+    ],
+    curiosities: [
+      {
+        title: "Curiosidades",
+        description: cur.description,
+        icon: cur.icon
+      }
+    ],
+    authorIntention: `${intent.icon} ${intent.description}`
+  };
 }
 
 app.post("/api/analyze", async (req, res) => {
@@ -98,18 +134,15 @@ app.post("/api/analyze", async (req, res) => {
   const { lyrics, songTitle, artist } = parseResult.data;
 
   try {
-    const analysisText = await analyzeLyrics(lyrics);
+    const analysis = await analyzeLyrics(lyrics);
 
-    // Aqui você pode adaptar para extrair referências, curiosidades, etc.
     res.json({
       lyrics,
       songTitle,
       artist,
-      references: [
-        { title: "Análise IA", description: analysisText, icon: "🤖" }
-      ],
-      curiosities: [],
-      authorIntention: analysisText,
+      references: analysis.references,
+      curiosities: analysis.curiosities,
+      authorIntention: analysis.authorIntention,
       createdAt: new Date().toISOString()
     });
   } catch (err: any) {
@@ -146,3 +179,5 @@ app.post("/api/analyze", async (req, res) => {
     log(`serving on port ${port}`);
   });
 })();
+
+// npm start

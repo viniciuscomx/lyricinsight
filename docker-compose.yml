@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lyricinsight-server
+    working_dir: /app
+    command: ["node", "dist/index.js"]
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    # O serviço server já serve o frontend buildado em produção

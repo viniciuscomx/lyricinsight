@@ -3,7 +3,7 @@
 LyricInsight é uma aplicação web para análise inteligente de letras musicais, utilizando IA (Gemini, HuggingFace, OpenAI, DeepSeek) para identificar referências culturais, curiosidades e intenções do autor.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/seu-usuario/lyricinsight/main/.github/lyricinsight-banner.png" alt="LyricInsight Banner" width="80%" />
+  <img src=""C:\Users\vinicius.xavier\Downloads\WhatsApp Image 2025-07-01 at 13.26.59.jpeg"" alt="LyricInsight Banner" width="80%" />
 </p>
 
 ---
